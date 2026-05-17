@@ -63,3 +63,5 @@ tests/fixtures/llm_traces/live/github_dev_workflow_full_loop.log
 # tests locally. Only the .json fixtures for each scenario are checked
 # in; the .log files are local debugging artifacts.
 tests/fixtures/llm_traces/live/*.log
+channels-src/.DS_Store
+channels-src/feishu/.DS_Store

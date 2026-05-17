@@ -580,7 +580,7 @@ function showConfigureModal(name, options) {
     .then((setup) => {
       const secrets = Array.isArray(setup.secrets) ? setup.secrets : [];
       const setupFields = Array.isArray(setup.fields) ? setup.fields : [];
-      if (secrets.length === 0 && setupFields.length === 0) {
+      if (secrets.length === 0 && setupFields.length === 0 && !setup.setup_session) {
         if (options && options.authData) {
           showAuthCard(options.authData);
         } else {
@@ -588,7 +588,7 @@ function showConfigureModal(name, options) {
         }
         return;
       }
-      renderConfigureModal(name, secrets, setupFields, setup.onboarding || null, options);
+      renderConfigureModal(name, secrets, setupFields, setup.onboarding || null, options, setup.setup_session || null);
     })
     .catch((err) => {
       showToast(I18n.t('extensions.setupLoadFailed', { message: err.message }), 'error');
@@ -598,7 +598,7 @@ function showConfigureModal(name, options) {
     });
 }
 
-function renderConfigureModal(name, secrets, setupFields, onboarding, options) {
+function renderConfigureModal(name, secrets, setupFields, onboarding, options, setupSession) {
   // Cancel any existing auth-flow overlay before replacing it.
   // Remove directly (don't clear authFlowPending) since a new overlay is about to be appended.
   var existingOverlay = document.querySelector('.configure-overlay');
@@ -637,6 +637,10 @@ function renderConfigureModal(name, secrets, setupFields, onboarding, options) {
     hint.className = 'configure-hint';
     hint.textContent = onboarding.credential_instructions;
     modal.appendChild(hint);
+  }
+
+  if (setupSession) {
+    renderSetupSessionPanel(name, modal, overlay, setupSession);
   }
 
   const form = document.createElement('div');
@@ -763,6 +767,125 @@ function renderConfigureModal(name, secrets, setupFields, onboarding, options) {
   if (fields.length > 0) fields[0].input.focus();
 }
 
+function renderSetupSessionPanel(name, modal, overlay, setupSession) {
+  const panel = document.createElement('div');
+  panel.className = 'setup-session-panel';
+
+  const title = document.createElement('div');
+  title.className = 'setup-session-title';
+  title.textContent = setupSession.title || 'Connect with QR code';
+  panel.appendChild(title);
+
+  const status = document.createElement('div');
+  status.className = 'setup-session-status';
+  status.textContent = setupSession.instructions || 'Scan the QR code to connect this extension.';
+  panel.appendChild(status);
+
+  const qrWrap = document.createElement('div');
+  qrWrap.className = 'setup-session-qr-wrap';
+  qrWrap.style.display = 'none';
+  const qr = document.createElement('img');
+  qr.className = 'setup-session-qr';
+  qr.alt = title.textContent;
+  qrWrap.appendChild(qr);
+  panel.appendChild(qrWrap);
+
+  const actions = document.createElement('div');
+  actions.className = 'setup-session-actions';
+
+  const startBtn = document.createElement('button');
+  startBtn.className = 'btn-ext activate';
+  startBtn.type = 'button';
+  startBtn.textContent = 'Start QR setup';
+  actions.appendChild(startBtn);
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn-ext remove';
+  cancelBtn.type = 'button';
+  cancelBtn.textContent = 'Cancel QR setup';
+  cancelBtn.style.display = 'none';
+  actions.appendChild(cancelBtn);
+
+  panel.appendChild(actions);
+  modal.appendChild(panel);
+
+  function stopPoller() {
+    if (overlay.__setupSessionPoller) {
+      clearInterval(overlay.__setupSessionPoller);
+      overlay.__setupSessionPoller = null;
+    }
+  }
+
+  function applySessionState(data) {
+    if (!data) return;
+    overlay.dataset.setupSessionId = data.session_id || '';
+    if (data.qr_image_url) {
+      qr.src = data.qr_image_url;
+      qrWrap.style.display = '';
+    }
+    if (data.message) status.textContent = data.message;
+    if (data.state === 'qr_required' || data.state === 'waiting_scan' || data.state === 'scanned') {
+      startBtn.disabled = true;
+      cancelBtn.style.display = '';
+    } else if (data.state === 'ready') {
+      stopPoller();
+      if (overlay) overlay.removeAttribute('data-auth-flow');
+      closeConfigureModal(name);
+      showToast(data.message || 'Channel connected.', 'success');
+      refreshCurrentSettingsTab();
+    } else if (data.state === 'expired' || data.state === 'failed' || data.state === 'cancelled') {
+      stopPoller();
+      startBtn.disabled = false;
+      cancelBtn.style.display = 'none';
+      qrWrap.style.display = 'none';
+    }
+  }
+
+  function pollSession() {
+    const sessionId = overlay.dataset.setupSessionId;
+    if (!sessionId) return;
+    apiFetch('/api/extensions/' + encodeURIComponent(name) + '/setup/session/' + encodeURIComponent(sessionId))
+      .then(applySessionState)
+      .catch((err) => {
+        stopPoller();
+        startBtn.disabled = false;
+        cancelBtn.style.display = 'none';
+        status.textContent = 'QR setup failed: ' + err.message;
+      });
+  }
+
+  startBtn.addEventListener('click', () => {
+    startBtn.disabled = true;
+    status.textContent = 'Requesting QR code...';
+    apiFetch('/api/extensions/' + encodeURIComponent(name) + '/setup/session', { method: 'POST' })
+      .then((data) => {
+        applySessionState(data);
+        stopPoller();
+        overlay.__setupSessionPoller = setInterval(pollSession, 2500);
+        pollSession();
+      })
+      .catch((err) => {
+        startBtn.disabled = false;
+        status.textContent = 'Could not start QR setup: ' + err.message;
+      });
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    const sessionId = overlay.dataset.setupSessionId;
+    stopPoller();
+    cancelBtn.style.display = 'none';
+    startBtn.disabled = false;
+    if (!sessionId) return;
+    apiFetch('/api/extensions/' + encodeURIComponent(name) + '/setup/session/' + encodeURIComponent(sessionId), {
+      method: 'DELETE',
+    })
+      .then(applySessionState)
+      .catch((err) => {
+        status.textContent = 'Could not cancel QR setup: ' + err.message;
+      });
+  });
+}
+
 function setConfigureInlineError(overlay, message) {
   const error = overlay && overlay.querySelector('.configure-inline-error');
   if (!error) return;
@@ -844,7 +967,10 @@ function submitConfigureModal(name, fields, options) {
 function closeConfigureModal(extensionName) {
   if (typeof extensionName !== 'string') extensionName = null;
   const existing = getConfigureOverlay(extensionName);
-  if (existing) existing.remove();
+  if (existing) {
+    if (existing.__setupSessionPoller) clearInterval(existing.__setupSessionPoller);
+    existing.remove();
+  }
   if (!document.querySelector('.configure-overlay') && !document.querySelector('.auth-card')) {
     setAuthFlowPending(false);
     enableChatInput();

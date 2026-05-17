@@ -30,6 +30,7 @@
 mod attachments;
 mod channel;
 mod http;
+mod lark;
 mod manager;
 pub mod relay;
 mod repl;
@@ -52,6 +53,7 @@ pub use channel::{
     StatusUpdate, ThreadSummary, ToolDecision, routing_target_from_metadata,
 };
 pub use http::{HttpChannel, HttpChannelState};
+pub use lark::LarkChannel;
 pub use manager::ChannelManager;
 pub use repl::ReplChannel;
 pub use signal::SignalChannel;

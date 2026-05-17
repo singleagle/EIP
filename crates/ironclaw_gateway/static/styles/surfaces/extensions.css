@@ -546,6 +546,50 @@
   line-height: 1.5;
 }
 
+.setup-session-panel {
+  margin: 0 0 16px 0;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.setup-session-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.setup-session-status {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.setup-session-qr-wrap {
+  margin-top: 12px;
+  display: flex;
+  justify-content: center;
+}
+
+.setup-session-qr {
+  width: min(240px, 72vw);
+  height: min(240px, 72vw);
+  object-fit: contain;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 8px;
+}
+
+.setup-session-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
 .configure-inline-error {
   margin: 16px 0 0 0;
   padding: 10px 12px;
