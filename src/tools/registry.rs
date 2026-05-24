@@ -18,11 +18,11 @@ use crate::tools::builder::{
 use crate::tools::builtin::{
     ApplyPatchTool, CancelJobTool, CreateJobTool, EchoTool, ExtensionInfoTool, FileUndoTool,
     GlobTool, GrepTool, HttpTool, JobEventsTool, JobPromptTool, JobStatusTool, JsonTool,
-    ListDirTool, ListJobsTool, MemoryReadTool, MemorySearchTool, MemoryTreeTool, MemoryWriteTool,
-    PlanUpdateTool, PromptQueue, ReadFileTool, ShellTool, SkillInstallTool, SkillListTool,
-    SkillRemoveTool, SkillSearchTool, TimeTool, ToolActivateTool, ToolAuthTool, ToolInstallTool,
-    ToolListTool, ToolPermissionSetTool, ToolRemoveTool, ToolSearchTool, ToolUpgradeTool,
-    WriteFileTool, shared_file_history, shared_read_file_state,
+    KnowledgeWikiTool, ListDirTool, ListJobsTool, MemoryReadTool, MemorySearchTool, MemoryTreeTool,
+    MemoryWriteTool, PlanUpdateTool, PromptQueue, ReadFileTool, ShellTool, SkillInstallTool,
+    SkillListTool, SkillRemoveTool, SkillSearchTool, TimeTool, ToolActivateTool, ToolAuthTool,
+    ToolInstallTool, ToolListTool, ToolPermissionSetTool, ToolRemoveTool, ToolSearchTool,
+    ToolUpgradeTool, WriteFileTool, shared_file_history, shared_read_file_state,
 };
 use crate::tools::rate_limiter::RateLimiter;
 use crate::tools::tool::{
@@ -67,6 +67,8 @@ const PROTECTED_TOOL_NAMES: &[&str] = &[
     "memory_write",
     "memory_read",
     "memory_tree",
+    "knowledge_wiki",
+    "wiki_context",
     // Job tools
     "create_job",
     "list_jobs",
@@ -586,6 +588,7 @@ impl ToolRegistry {
     pub fn register_memory_tools_with_resolver(
         &self,
         resolver: Arc<dyn crate::tools::builtin::memory::WorkspaceResolver>,
+        db: Arc<dyn Database>,
         reasoning_llm: Option<Arc<dyn crate::llm::LlmProvider>>,
         reasoning_enabled: bool,
     ) {
@@ -596,9 +599,18 @@ impl ToolRegistry {
         )));
         self.register_sync(Arc::new(MemoryWriteTool::new(Arc::clone(&resolver))));
         self.register_sync(Arc::new(MemoryReadTool::new(Arc::clone(&resolver))));
-        self.register_sync(Arc::new(MemoryTreeTool::new(resolver)));
+        self.register_sync(Arc::new(MemoryTreeTool::new(Arc::clone(&resolver))));
+        self.register_sync(Arc::new(KnowledgeWikiTool::new(
+            Arc::clone(&resolver),
+            Arc::clone(&db),
+        )));
+        self.register_sync(Arc::new(KnowledgeWikiTool::new_with_name(
+            "wiki_context",
+            resolver,
+            db,
+        )));
 
-        tracing::debug!("Registered 4 memory tools");
+        tracing::debug!("Registered 6 memory tools");
     }
 
     /// Register memory tools with a fixed workspace (backward compatibility).

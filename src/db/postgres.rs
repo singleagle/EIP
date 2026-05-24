@@ -17,13 +17,16 @@ use crate::config::DatabaseConfig;
 use crate::context::{ActionRecord, JobContext, JobState};
 use crate::db::{
     ApiTokenRecord, ChannelPairingStore, ConversationStore, Database, IdentityStore, JobStore,
-    PairingRequestRecord, RoutineStore, SandboxStore, SettingsStore, ToolFailureStore,
-    UserIdentityRecord, UserRecord, UserStore, WorkspaceStore,
+    KnowledgeWikiStore, PairingRequestRecord, RoutineStore, SandboxStore, SettingsStore,
+    ToolFailureStore, UserIdentityRecord, UserRecord, UserStore, WorkspaceStore,
 };
 use crate::error::{DatabaseError, WorkspaceError};
 use crate::history::{
     AgentJobRecord, AgentJobSummary, ConversationMessage, ConversationSummary, JobEventRecord,
     LlmCallRecord, SandboxJobRecord, SandboxJobSummary, SettingRow, Store,
+};
+use crate::knowledge_wiki::{
+    WikiChunkRecord, WikiDocumentRecord, WikiRelationRecord, WikiSearchHit, WikiTriggerRecord,
 };
 use crate::workspace::{
     ChunkWrite, DocumentVersion, MemoryChunk, MemoryDocument, Repository, SearchConfig,
@@ -1649,5 +1652,265 @@ impl IdentityStore for PgBackend {
 
         tx.commit().await?;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl KnowledgeWikiStore for PgBackend {
+    async fn upsert_wiki_document(&self, record: &WikiDocumentRecord) -> Result<(), DatabaseError> {
+        let conn = self.store.pool().get().await?;
+        conn.execute(
+            "INSERT INTO knowledge_wiki_docs \
+             (namespace, path, content_sha256, frontmatter_json, doc_type, priority, \
+              max_inject_chars, indexed_at, status) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+             ON CONFLICT (namespace, path) DO UPDATE SET \
+                content_sha256 = EXCLUDED.content_sha256, \
+                frontmatter_json = EXCLUDED.frontmatter_json, \
+                doc_type = EXCLUDED.doc_type, \
+                priority = EXCLUDED.priority, \
+                max_inject_chars = EXCLUDED.max_inject_chars, \
+                indexed_at = EXCLUDED.indexed_at, \
+                status = EXCLUDED.status",
+            &[
+                &record.namespace,
+                &record.path,
+                &record.content_sha256,
+                &record.frontmatter_json,
+                &record.doc_type,
+                &record.priority,
+                &record.max_inject_chars,
+                &record.indexed_at,
+                &record.status,
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn replace_wiki_chunks(
+        &self,
+        namespace: &str,
+        path: &str,
+        chunks: &[WikiChunkRecord],
+    ) -> Result<(), DatabaseError> {
+        let mut conn = self.store.pool().get().await?;
+        let tx = conn.transaction().await?;
+        tx.execute(
+            "DELETE FROM knowledge_wiki_chunks WHERE namespace = $1 AND path = $2",
+            &[&namespace, &path],
+        )
+        .await?;
+        for chunk in chunks {
+            tx.execute(
+                "INSERT INTO knowledge_wiki_chunks \
+                 (chunk_id, namespace, path, chunk_index, content_sha256, chunk_sha256, \
+                  preview, token_count, indexed_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                &[
+                    &chunk.chunk_id,
+                    &chunk.namespace,
+                    &chunk.path,
+                    &chunk.chunk_index,
+                    &chunk.content_sha256,
+                    &chunk.chunk_sha256,
+                    &chunk.preview,
+                    &chunk.token_count,
+                    &chunk.indexed_at,
+                ],
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn upsert_wiki_relation(&self, record: &WikiRelationRecord) -> Result<(), DatabaseError> {
+        let conn = self.store.pool().get().await?;
+        conn.execute(
+            "INSERT INTO knowledge_wiki_relations \
+             (relation_id, namespace, path, subject, predicate, object, confidence, status, \
+              sources_json, content_sha256, schema_version, indexed_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+             ON CONFLICT (namespace, relation_id) DO UPDATE SET \
+                path = EXCLUDED.path, subject = EXCLUDED.subject, predicate = EXCLUDED.predicate, \
+                object = EXCLUDED.object, confidence = EXCLUDED.confidence, status = EXCLUDED.status, \
+                sources_json = EXCLUDED.sources_json, content_sha256 = EXCLUDED.content_sha256, \
+                schema_version = EXCLUDED.schema_version, indexed_at = EXCLUDED.indexed_at",
+            &[
+                &record.relation_id,
+                &record.namespace,
+                &record.path,
+                &record.subject,
+                &record.predicate,
+                &record.object,
+                &record.confidence,
+                &record.status,
+                &record.sources_json,
+                &record.content_sha256,
+                &record.schema_version,
+                &record.indexed_at,
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn replace_wiki_triggers(
+        &self,
+        namespace: &str,
+        path: &str,
+        triggers: &[WikiTriggerRecord],
+    ) -> Result<(), DatabaseError> {
+        let mut conn = self.store.pool().get().await?;
+        let tx = conn.transaction().await?;
+        tx.execute(
+            "DELETE FROM knowledge_wiki_triggers WHERE namespace = $1 AND path = $2",
+            &[&namespace, &path],
+        )
+        .await?;
+        for trigger in triggers {
+            tx.execute(
+                "INSERT INTO knowledge_wiki_triggers \
+                 (namespace, path, keyword, priority, status, indexed_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6)",
+                &[
+                    &trigger.namespace,
+                    &trigger.path,
+                    &trigger.keyword,
+                    &trigger.priority,
+                    &trigger.status,
+                    &trigger.indexed_at,
+                ],
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn get_wiki_document_hash(
+        &self,
+        namespace: &str,
+        path: &str,
+    ) -> Result<Option<String>, DatabaseError> {
+        let conn = self.store.pool().get().await?;
+        let row = conn
+            .query_opt(
+                "SELECT content_sha256 FROM knowledge_wiki_docs WHERE namespace = $1 AND path = $2",
+                &[&namespace, &path],
+            )
+            .await?;
+        Ok(row.map(|r| r.get(0)))
+    }
+
+    async fn knowledge_wiki_search(
+        &self,
+        namespace: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<WikiSearchHit>, DatabaseError> {
+        let conn = self.store.pool().get().await?;
+        let pattern = format!("%{}%", query);
+        let limit_i64 = limit.min(100) as i64;
+        let rows = conn
+            .query(
+                "SELECT kind, path, chunk_id, relation_id, subject, predicate, object, status, \
+                        doc_type, priority, max_inject_chars, preview, score, indexed_at \
+                   FROM ( \
+                    SELECT 'chunk' AS kind, c.path, c.chunk_id, NULL::TEXT AS relation_id, \
+                           NULL::TEXT AS subject, NULL::TEXT AS predicate, NULL::TEXT AS object, \
+                           d.status AS status, d.doc_type, COALESCE(d.priority, 0) AS priority, d.max_inject_chars, \
+                           c.preview, (1.0::DOUBLE PRECISION + d.priority::DOUBLE PRECISION / 1000.0)::DOUBLE PRECISION AS score, c.indexed_at \
+                      FROM knowledge_wiki_chunks c \
+                      JOIN knowledge_wiki_docs d ON d.namespace = c.namespace AND d.path = c.path \
+                     WHERE c.namespace = $1 AND d.status != 'disabled' AND \
+                           (c.preview ILIKE $2 OR c.path ILIKE $2 OR d.frontmatter_json::TEXT ILIKE $2) \
+                    UNION ALL \
+                    SELECT 'trigger' AS kind, c.path, c.chunk_id, NULL::TEXT AS relation_id, \
+                           NULL::TEXT AS subject, NULL::TEXT AS predicate, NULL::TEXT AS object, \
+                           d.status AS status, d.doc_type, COALESCE(d.priority, 0) AS priority, d.max_inject_chars, \
+                           c.preview, (2.0::DOUBLE PRECISION + t.priority::DOUBLE PRECISION / 1000.0)::DOUBLE PRECISION AS score, c.indexed_at \
+                      FROM knowledge_wiki_triggers t \
+                      JOIN knowledge_wiki_docs d ON d.namespace = t.namespace AND d.path = t.path \
+                      JOIN knowledge_wiki_chunks c ON c.namespace = t.namespace AND c.path = t.path \
+                     WHERE t.namespace = $1 AND t.status != 'disabled' AND d.status != 'disabled' \
+                       AND $4 ILIKE ('%' || t.keyword || '%') \
+                    UNION ALL \
+                    SELECT 'relation' AS kind, r.path, NULL::TEXT AS chunk_id, r.relation_id, \
+                           r.subject, r.predicate, r.object, r.status, \
+                           d.doc_type, COALESCE(d.priority, 0) AS priority, d.max_inject_chars, \
+                           r.subject || ' ' || r.predicate || ' ' || r.object AS preview, \
+                           (r.confidence + COALESCE(d.priority, 0)::DOUBLE PRECISION / 1000.0)::DOUBLE PRECISION AS score, r.indexed_at \
+                      FROM knowledge_wiki_relations r \
+                      LEFT JOIN knowledge_wiki_docs d ON d.namespace = r.namespace AND d.path = r.path \
+                     WHERE r.namespace = $1 AND \
+                           (r.subject ILIKE $2 OR r.predicate ILIKE $2 OR r.object ILIKE $2 OR r.path ILIKE $2) \
+                   ) hits \
+                  ORDER BY score DESC, indexed_at DESC \
+                  LIMIT $3",
+                &[&namespace, &pattern, &limit_i64, &query],
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| WikiSearchHit {
+                kind: row.get(0),
+                path: row.get(1),
+                chunk_id: row.get(2),
+                relation_id: row.get(3),
+                subject: row.get(4),
+                predicate: row.get(5),
+                object: row.get(6),
+                status: row.get(7),
+                doc_type: row.get(8),
+                priority: row.get(9),
+                max_inject_chars: row.get(10),
+                preview: row.get(11),
+                score: row.get::<_, f64>(12) as f32,
+                indexed_at: row.get(13),
+            })
+            .collect())
+    }
+
+    async fn knowledge_wiki_status(
+        &self,
+        namespace: &str,
+    ) -> Result<serde_json::Value, DatabaseError> {
+        let conn = self.store.pool().get().await?;
+        let docs: i64 = conn
+            .query_one(
+                "SELECT COUNT(*) FROM knowledge_wiki_docs WHERE namespace = $1",
+                &[&namespace],
+            )
+            .await?
+            .get(0);
+        let chunks: i64 = conn
+            .query_one(
+                "SELECT COUNT(*) FROM knowledge_wiki_chunks WHERE namespace = $1",
+                &[&namespace],
+            )
+            .await?
+            .get(0);
+        let relations: i64 = conn
+            .query_one(
+                "SELECT COUNT(*) FROM knowledge_wiki_relations WHERE namespace = $1",
+                &[&namespace],
+            )
+            .await?
+            .get(0);
+        let triggers: i64 = conn
+            .query_one(
+                "SELECT COUNT(*) FROM knowledge_wiki_triggers WHERE namespace = $1",
+                &[&namespace],
+            )
+            .await?
+            .get(0);
+        Ok(serde_json::json!({
+            "documents": docs,
+            "chunks": chunks,
+            "relations": relations,
+            "triggers": triggers,
+        }))
     }
 }

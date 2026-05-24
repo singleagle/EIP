@@ -47,6 +47,30 @@ fn resolve_settings_temperature(
         .map(|t| (t as f32).clamp(0.0, 2.0))
 }
 
+fn escape_xml_text(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn user_prompt_with_knowledge_wiki_context(user_content: &str, context: &str) -> String {
+    format!(
+        "{context}\n\n<user_request>\n{}\n</user_request>",
+        escape_xml_text(user_content)
+    )
+}
+
+fn replace_last_user_message_content(messages: &mut [ChatMessage], content: &str) {
+    if let Some(last_user) = messages
+        .iter_mut()
+        .rev()
+        .find(|m| m.role == crate::llm::Role::User)
+    {
+        last_user.content = content.to_string();
+    }
+}
+
 /// Result of the agentic loop execution.
 pub(super) enum AgenticLoopResult {
     /// Completed with a response.
@@ -183,6 +207,25 @@ impl Agent {
             message.content.clone()
         };
 
+        let knowledge_wiki_context = if let Some(db) = self.deps.store.as_ref() {
+            match crate::knowledge_wiki::WikiContextProvider::new(Arc::clone(db))
+                .context_for_prompt(&user_content)
+                .await
+            {
+                Ok(context) => context,
+                Err(e) => {
+                    tracing::debug!("Could not load knowledge_wiki context: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let llm_user_content = knowledge_wiki_context
+            .as_deref()
+            .map(|context| user_prompt_with_knowledge_wiki_context(&user_content, context))
+            .unwrap_or_else(|| user_content.clone());
+
         // Build skill context block
         let skill_context = if !active_skills.is_empty() {
             let mut context_parts = Vec::new();
@@ -286,17 +329,12 @@ impl Agent {
             cached_admin_tool_policy: tokio::sync::OnceCell::new(),
         };
 
-        // If /skill-name mentions were expanded, rewrite the last user message
-        // in the conversation history so the LLM sees the natural-language version.
-        let messages_for_llm = if user_content != message.content {
+        // Rewrite only the LLM-facing copy of the last user message. The
+        // persisted turn remains the user's original input, while skills and
+        // wiki context can still shape this turn's model call.
+        let messages_for_llm = if llm_user_content != message.content {
             let mut msgs = initial_messages;
-            if let Some(last_user) = msgs
-                .iter_mut()
-                .rev()
-                .find(|m| m.role == crate::llm::Role::User)
-            {
-                *last_user = ChatMessage::user(&user_content);
-            }
+            replace_last_user_message_content(&mut msgs, &llm_user_content);
             msgs
         } else {
             initial_messages
@@ -1832,12 +1870,51 @@ mod tests {
 
     use super::{
         capture_auth_prompt, check_auth_required, extract_auth_prompt, parse_auth_result,
-        persist_selected_auth_prompt, resolve_settings_temperature, restore_selected_auth_prompt,
-        selected_model_override,
+        persist_selected_auth_prompt, replace_last_user_message_content,
+        resolve_settings_temperature, restore_selected_auth_prompt, selected_model_override,
+        user_prompt_with_knowledge_wiki_context,
     };
     use crate::agent::session::PendingAuthPrompt;
     use crate::generated_images::GeneratedImageSentinel;
     use ironclaw_common::ExtensionName;
+
+    #[test]
+    fn knowledge_wiki_context_wraps_llm_user_prompt() {
+        let context = concat!(
+            "<knowledge_wiki_context namespace=\"global\" trust=\"operator-maintained\">\n",
+            "<entry path=\"rules.md\">Follow approved procurement rules.</entry>\n",
+            "</knowledge_wiki_context>"
+        );
+
+        let prompt = user_prompt_with_knowledge_wiki_context("Compare A < B & explain", context);
+
+        assert!(prompt.starts_with("<knowledge_wiki_context"));
+        assert!(prompt.contains("trust=\"operator-maintained\""));
+        assert!(prompt.contains("<user_request>\nCompare A &lt; B &amp; explain\n</user_request>"));
+    }
+
+    #[test]
+    fn replacing_last_user_message_preserves_parts_and_prior_history() {
+        use crate::llm::{ChatMessage, ContentPart, ImageUrl};
+
+        let image = ContentPart::ImageUrl {
+            image_url: ImageUrl {
+                url: "data:image/png;base64,abc".to_string(),
+                detail: None,
+            },
+        };
+        let mut messages = vec![
+            ChatMessage::user("first"),
+            ChatMessage::assistant("answer"),
+            ChatMessage::user_with_parts("original", vec![image]),
+        ];
+
+        replace_last_user_message_content(&mut messages, "enhanced");
+
+        assert_eq!(messages[0].content, "first");
+        assert_eq!(messages[2].content, "enhanced");
+        assert_eq!(messages[2].content_parts.len(), 1);
+    }
 
     /// Minimal LLM provider for unit tests that always returns a static response.
     struct StaticLlmProvider;
