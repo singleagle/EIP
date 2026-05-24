@@ -625,6 +625,7 @@ impl AppBuilder {
                 cheap_llm.map(Arc::clone).or_else(|| Some(Arc::clone(llm)));
             tools.register_memory_tools_with_resolver(
                 pool,
+                Arc::clone(db),
                 reasoning_llm,
                 self.config.search.reasoning_enabled,
             );

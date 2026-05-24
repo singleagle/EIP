@@ -10,6 +10,7 @@ mod grep_tool;
 mod http;
 mod job;
 mod json;
+mod knowledge_wiki;
 pub mod memory;
 mod message;
 pub mod path_utils;
@@ -39,6 +40,7 @@ pub use job::{
     PromptQueue, SchedulerSlot,
 };
 pub use json::JsonTool;
+pub use knowledge_wiki::KnowledgeWikiTool;
 pub use memory::{MemoryReadTool, MemorySearchTool, MemoryTreeTool, MemoryWriteTool};
 pub use message::MessageTool;
 pub use plan::PlanUpdateTool;

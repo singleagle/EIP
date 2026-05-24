@@ -43,6 +43,9 @@ use crate::history::{
     AgentJobRecord, AgentJobSummary, ConversationMessage, ConversationSummary, JobEventRecord,
     LlmCallRecord, SandboxJobRecord, SandboxJobSummary, SettingRow,
 };
+use crate::knowledge_wiki::{
+    WikiChunkRecord, WikiDocumentRecord, WikiRelationRecord, WikiSearchHit, WikiTriggerRecord,
+};
 use crate::workspace::{ChunkWrite, MemoryChunk, MemoryDocument, WorkspaceEntry};
 use crate::workspace::{SearchConfig, SearchResult};
 
@@ -1255,6 +1258,45 @@ pub trait IdentityStore: Send + Sync {
     ) -> Result<(), DatabaseError>;
 }
 
+#[async_trait]
+pub trait KnowledgeWikiStore: Send + Sync {
+    async fn upsert_wiki_document(&self, record: &WikiDocumentRecord) -> Result<(), DatabaseError>;
+
+    async fn replace_wiki_chunks(
+        &self,
+        namespace: &str,
+        path: &str,
+        chunks: &[WikiChunkRecord],
+    ) -> Result<(), DatabaseError>;
+
+    async fn upsert_wiki_relation(&self, record: &WikiRelationRecord) -> Result<(), DatabaseError>;
+
+    async fn replace_wiki_triggers(
+        &self,
+        namespace: &str,
+        path: &str,
+        triggers: &[WikiTriggerRecord],
+    ) -> Result<(), DatabaseError>;
+
+    async fn get_wiki_document_hash(
+        &self,
+        namespace: &str,
+        path: &str,
+    ) -> Result<Option<String>, DatabaseError>;
+
+    async fn knowledge_wiki_search(
+        &self,
+        namespace: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<WikiSearchHit>, DatabaseError>;
+
+    async fn knowledge_wiki_status(
+        &self,
+        namespace: &str,
+    ) -> Result<serde_json::Value, DatabaseError>;
+}
+
 /// Backend-agnostic database supertrait.
 ///
 /// Combines all sub-traits into one. Existing `Arc<dyn Database>` consumers
@@ -1271,6 +1313,7 @@ pub trait Database:
     + UserStore
     + ChannelPairingStore
     + IdentityStore
+    + KnowledgeWikiStore
     + Send
     + Sync
 {

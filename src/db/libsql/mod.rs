@@ -9,6 +9,7 @@
 mod conversations;
 mod identities;
 mod jobs;
+mod knowledge_wiki;
 mod pairing;
 mod routines;
 mod sandbox;

@@ -62,6 +62,7 @@ pub mod hooks;
 pub mod http_intercept;
 #[cfg(feature = "import")]
 pub mod import;
+pub mod knowledge_wiki;
 pub mod llm_host;
 pub mod observability;
 pub mod orchestrator;
