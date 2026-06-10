@@ -2521,6 +2521,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2972feb8dffe7bc8c5463b1dacda1b0dfbed3710e50f977d965429692d74cd8"
 
 [[package]]
+name = "eip"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs",
+ "libsql",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3871,6 +3887,7 @@ dependencies = [
  "dirs",
  "dotenvy",
  "ed25519-dalek",
+ "eip",
  "eventsource-stream",
  "flate2",
  "fs4",

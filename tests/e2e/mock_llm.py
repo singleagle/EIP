@@ -1998,6 +1998,185 @@ async def chat_completions(request: web.Request) -> web.StreamResponse:
     return await _stream_text(request, cid, text)
 
 
+async def responses(request: web.Request) -> web.StreamResponse:
+    """Handle POST /v1/responses and /responses."""
+    global _last_chat_request
+    body = await request.json()
+    _last_chat_request = body
+    messages = _responses_input_to_messages(body)
+    has_tools = bool(body.get("tools"))
+    cid = f"resp_{uuid.uuid4().hex[:8]}"
+
+    if _conversation_wants_slow_response(messages):
+        await asyncio.sleep(2.0)
+
+    job_resp = match_job_response(messages, has_tools)
+    if job_resp:
+        if "tool_call" in job_resp:
+            return await _responses_stream_tool_call(request, cid, job_resp["tool_call"])
+        return await _responses_stream_text(request, cid, job_resp["text"])
+
+    special = match_special_response(messages, has_tools)
+    if special and (
+        _conversation_has_user_trigger(messages, LOOP_FOREVER_TRIGGER)
+        or _conversation_has_user_trigger(messages, MULTI_STEP_TRIGGER)
+        or any(
+            _conversation_has_user_trigger(messages, trigger)
+            for trigger in (
+                GITHUB_ISSUE_LIFECYCLE_TRIGGER,
+                GMAIL_ROUNDTRIP_TRIGGER,
+                GCAL_LIFECYCLE_TRIGGER,
+                NOTION_SEARCH_LIFECYCLE_TRIGGER,
+            )
+        )
+    ):
+        if "tool_call" in special:
+            return await _responses_stream_tool_call(request, cid, special["tool_call"])
+        return await _responses_stream_text(request, cid, special.get("text", ""))
+
+    tool_results = _find_tool_results(messages)
+    if tool_results:
+        followup = match_tool_call(messages, has_tools)
+        if followup:
+            return await _responses_stream_tool_call(request, cid, followup)
+        if len(tool_results) == 1:
+            tr = tool_results[0]
+            text = f"The {tr['name']} tool returned: {tr['content']}"
+        else:
+            lines = [f"Dispatched {len(tool_results)} tools:"]
+            for tr in tool_results:
+                lines.append(f"- {tr['name']}: {tr['content']}")
+            text = "\n".join(lines)
+        return await _responses_stream_text(request, cid, text)
+
+    resumed_text = _resumed_action_summary(messages)
+    if resumed_text:
+        return await _responses_stream_text(request, cid, resumed_text)
+
+    if special:
+        if "tool_call" in special:
+            return await _responses_stream_tool_call(request, cid, special["tool_call"])
+        return await _responses_stream_text(request, cid, special.get("text", ""))
+
+    tc = match_tool_call(messages, has_tools)
+    if tc:
+        return await _responses_stream_tool_call(request, cid, tc)
+
+    return await _responses_stream_text(request, cid, match_response(messages))
+
+
+def _responses_input_to_messages(body: dict) -> list[dict]:
+    messages: list[dict] = []
+    instructions = body.get("instructions")
+    if isinstance(instructions, str) and instructions:
+        messages.append({"role": "system", "content": instructions})
+
+    for item in body.get("input", []) or []:
+        item_type = item.get("type")
+        if item_type == "message":
+            role = item.get("role", "user")
+            content = item.get("content", "")
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    text = part.get("text")
+                    if isinstance(text, str):
+                        text_parts.append(text)
+                content = " ".join(text_parts)
+            messages.append({"role": role, "content": content or ""})
+        elif item_type == "function_call":
+            messages.append({
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{
+                    "id": item.get("call_id") or item.get("id") or "call_mock",
+                    "type": "function",
+                    "function": {
+                        "name": item.get("name", ""),
+                        "arguments": item.get("arguments", "{}"),
+                    },
+                }],
+            })
+        elif item_type == "function_call_output":
+            messages.append({
+                "role": "tool",
+                "tool_call_id": item.get("call_id", ""),
+                "name": item.get("name", "tool"),
+                "content": item.get("output", ""),
+            })
+    return messages
+
+
+async def _responses_stream_text(
+    request: web.Request,
+    response_id: str,
+    text: str,
+) -> web.StreamResponse:
+    resp = web.StreamResponse(status=200, headers={
+        "Content-Type": "text/event-stream", "Cache-Control": "no-cache"})
+    await resp.prepare(request)
+    if text:
+        await _send_sse(resp, {
+            "type": "response.output_text.delta",
+            "delta": text,
+        })
+    await _send_sse(resp, {
+        "type": "response.completed",
+        "response": {
+            "id": response_id,
+            "status": "completed",
+            "usage": {"input_tokens": 10, "output_tokens": max(1, len(text.split()))},
+        },
+    })
+    await resp.write(b"data: [DONE]\n\n")
+    return resp
+
+
+async def _responses_stream_tool_call(
+    request: web.Request,
+    response_id: str,
+    calls: list[dict] | dict,
+) -> web.StreamResponse:
+    if isinstance(calls, dict):
+        calls = [calls]
+    resp = web.StreamResponse(status=200, headers={
+        "Content-Type": "text/event-stream", "Cache-Control": "no-cache"})
+    await resp.prepare(request)
+    for idx, tc in enumerate(calls):
+        item_id = f"fc_{idx}_{uuid.uuid4().hex[:6]}"
+        call_id = f"call_{uuid.uuid4().hex[:8]}"
+        arguments = json.dumps(tc["arguments"])
+        await _send_sse(resp, {
+            "type": "response.output_item.added",
+            "item": {
+                "type": "function_call",
+                "id": item_id,
+                "call_id": call_id,
+                "name": tc["tool_name"],
+            },
+        })
+        await _send_sse(resp, {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "function_call",
+                "id": item_id,
+                "call_id": call_id,
+                "name": tc["tool_name"],
+                "arguments": arguments,
+            },
+        })
+    await _send_sse(resp, {
+        "type": "response.completed",
+        "response": {
+            "id": response_id,
+            "status": "completed",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        },
+    })
+    await resp.write(b"data: [DONE]\n\n")
+    return resp
+
+
 def _text_response(cid: str, text: str) -> web.Response:
     return web.json_response({
         "id": cid, "object": "chat.completion", "created": int(time.time()),
@@ -2588,6 +2767,8 @@ def main():
     # Register both /v1/ and non-/v1/ paths (rig-core omits the /v1/ prefix)
     app.router.add_post("/v1/chat/completions", chat_completions)
     app.router.add_post("/chat/completions", chat_completions)
+    app.router.add_post("/v1/responses", responses)
+    app.router.add_post("/responses", responses)
     app.router.add_get("/v1/models", models)
     app.router.add_get("/models", models)
     app.router.add_post("/oauth/exchange", oauth_exchange)

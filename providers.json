@@ -114,7 +114,7 @@
       "openai-compatible",
       "compatible"
     ],
-    "protocol": "open_ai_completions",
+    "protocol": "open_ai_responses",
     "base_url_env": "LLM_BASE_URL",
     "base_url_required": true,
     "api_key_env": "LLM_API_KEY",

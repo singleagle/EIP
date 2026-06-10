@@ -117,6 +117,28 @@ async fn test_provider_connection(req: TestConnectionRequest) -> TestConnectionR
             let builder = client.post(&url).json(&body);
             interpret_chat_response(builder.send().await)
         }
+        "open_ai_responses" => {
+            let responses_url = if base.ends_with("/v1") {
+                format!("{base}/responses")
+            } else {
+                format!("{base}/v1/responses")
+            };
+            let body = serde_json::json!({
+                "model": req.model,
+                "input": [{
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "hi"}]
+                }],
+                "store": false,
+                "stream": true
+            });
+            let mut builder = client.post(&responses_url).json(&body);
+            if let Some(key) = req.api_key.as_deref().filter(|k| !k.is_empty()) {
+                builder = builder.header("Authorization", format!("Bearer {key}"));
+            }
+            interpret_chat_response(builder.send().await)
+        }
         _ => {
             // OpenAI-compatible (including nearai): POST /v1/chat/completions
             // If base already ends with /v1, append directly; otherwise insert /v1.
@@ -1218,6 +1240,10 @@ mod tests {
         );
         assert_eq!(
             models_endpoint_base("open_ai_completions", "https://example.test"),
+            "https://example.test"
+        );
+        assert_eq!(
+            models_endpoint_base("open_ai_responses", "https://example.test"),
             "https://example.test"
         );
     }

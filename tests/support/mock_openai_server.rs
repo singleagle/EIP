@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{Value, json};
@@ -95,6 +96,7 @@ impl MockOpenAiServerBuilder {
         let app = Router::new()
             .route("/v1/models", get(models_handler))
             .route("/v1/chat/completions", post(chat_completions_handler))
+            .route("/v1/responses", post(responses_handler))
             .with_state(Arc::clone(&state));
 
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -297,4 +299,159 @@ async fn chat_completions_handler(
     };
 
     Ok(Json(response))
+}
+
+async fn responses_handler(
+    State(state): State<Arc<MockOpenAiState>>,
+    Json(body): Json<Value>,
+) -> Result<Response, (StatusCode, String)> {
+    state.requests.lock().await.push(body.clone());
+
+    let model = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("mock-model");
+    let last_role = body
+        .get("input")
+        .and_then(|input| input.as_array())
+        .and_then(|items| items.last())
+        .map(responses_item_role)
+        .unwrap_or_default();
+
+    let latest_user = body
+        .get("input")
+        .and_then(|input| input.as_array())
+        .and_then(|items| {
+            items.iter().rev().find_map(|item| {
+                if item.get("role").and_then(|r| r.as_str()) == Some("user") {
+                    extract_responses_text(item)
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_default();
+
+    let selected = if last_role == "user" {
+        let latest_user_lower = latest_user.to_ascii_lowercase();
+        state
+            .rules
+            .iter()
+            .find(|r| latest_user_lower.contains(&r.contains.to_ascii_lowercase()))
+            .map(|r| r.response.clone())
+            .unwrap_or_else(|| state.default_response.clone())
+    } else {
+        state.default_response.clone()
+    };
+
+    let n = state.response_counter.fetch_add(1, Ordering::Relaxed);
+    let response_id = format!("resp_mock_{n}");
+    let body = match selected {
+        MockOpenAiResponse::Text(content) => responses_text_sse(&response_id, model, &content),
+        MockOpenAiResponse::ToolCalls(tool_calls) => {
+            responses_tool_calls_sse(&response_id, model, &tool_calls)
+        }
+        MockOpenAiResponse::Raw(value) => serde_json::to_string(&value).unwrap_or_default(),
+    };
+
+    Ok(([("content-type", "text/event-stream")], body).into_response())
+}
+
+fn responses_item_role(item: &Value) -> String {
+    match item.get("type").and_then(|v| v.as_str()) {
+        Some("function_call") => "assistant".to_string(),
+        Some("function_call_output") => "tool".to_string(),
+        _ => item
+            .get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+    }
+}
+
+fn extract_responses_text(item: &Value) -> Option<String> {
+    let content = item.get("content")?.as_array()?;
+    let mut out = String::new();
+    for part in content {
+        if part.get("type").and_then(|v| v.as_str()) == Some("input_text")
+            && let Some(text) = part.get("text").and_then(|v| v.as_str())
+        {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(text);
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+fn responses_text_sse(response_id: &str, model: &str, content: &str) -> String {
+    let mut body = String::new();
+    body.push_str(&format!(
+        "data: {}\n\n",
+        json!({
+            "type": "response.output_text.delta",
+            "delta": content,
+        })
+    ));
+    body.push_str(&format!(
+        "data: {}\n\n",
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": response_id,
+                "model": model,
+                "status": "completed",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            },
+        })
+    ));
+    body.push_str("data: [DONE]\n\n");
+    body
+}
+
+fn responses_tool_calls_sse(response_id: &str, model: &str, tool_calls: &[MockToolCall]) -> String {
+    let mut body = String::new();
+    for (idx, tc) in tool_calls.iter().enumerate() {
+        let item_id = format!("fc_{idx}");
+        body.push_str(&format!(
+            "data: {}\n\n",
+            json!({
+                "type": "response.output_item.added",
+                "item": {
+                    "type": "function_call",
+                    "id": item_id,
+                    "call_id": tc.id,
+                    "name": tc.name,
+                },
+            })
+        ));
+        body.push_str(&format!(
+            "data: {}\n\n",
+            json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "function_call",
+                    "id": item_id,
+                    "call_id": tc.id,
+                    "name": tc.name,
+                    "arguments": tc.arguments.to_string(),
+                },
+            })
+        ));
+    }
+    body.push_str(&format!(
+        "data: {}\n\n",
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": response_id,
+                "model": model,
+                "status": "completed",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            },
+        })
+    ));
+    body.push_str("data: [DONE]\n\n");
+    body
 }

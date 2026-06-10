@@ -26,6 +26,7 @@ pub mod host;
 pub mod nearai_chat;
 pub mod openai_codex_provider;
 pub(crate) mod openai_codex_session;
+mod openai_responses;
 mod provider;
 mod reasoning;
 pub mod recording;
@@ -194,6 +195,7 @@ fn create_registry_provider(
 
     match config.protocol {
         ProviderProtocol::OpenAiCompletions => create_openai_compat_from_registry(config),
+        ProviderProtocol::OpenAiResponses => create_openai_responses_from_registry(config),
         ProviderProtocol::Anthropic => create_anthropic_from_registry(config),
         ProviderProtocol::Ollama => create_ollama_from_registry(config),
         ProviderProtocol::DeepSeek => create_deepseek_from_registry(config),
@@ -275,6 +277,22 @@ async fn create_bedrock_provider(config: &LlmConfig) -> Result<Arc<dyn LlmProvid
         provider.active_model_name(),
     );
 
+    Ok(Arc::new(provider))
+}
+
+fn create_openai_responses_from_registry(
+    config: &RegistryProviderConfig,
+) -> Result<Arc<dyn LlmProvider>, LlmError> {
+    let provider = openai_responses::OpenAiResponsesProvider::new(
+        config,
+        normalize_openai_base_url(&config.base_url),
+    )?;
+    tracing::debug!(
+        provider = %config.provider_id,
+        model = %config.model,
+        base_url = %config.base_url,
+        "Using OpenAI-compatible Responses provider"
+    );
     Ok(Arc::new(provider))
 }
 
@@ -1026,9 +1044,9 @@ pub fn create_gemini_oauth_provider(config: &LlmConfig) -> Result<Arc<dyn LlmPro
 /// as Zai's `/api/paas/v4` or Gemini's `/v1beta/openai` — are returned
 /// unchanged so we don't corrupt provider-specific endpoints.
 ///
-/// **Note:** This is intentionally applied only to `OpenAiCompletions`-protocol
-/// providers. Ollama uses `/api/chat` (not `/v1/chat/completions`) and its
-/// rig-core client handles the path internally, so normalization is not needed.
+/// **Note:** This is intentionally applied only to OpenAI-compatible protocol
+/// providers. Ollama uses `/api/chat` and its rig-core client handles the path
+/// internally, so normalization is not needed.
 fn normalize_openai_base_url(url: &str) -> String {
     let trimmed = url.trim_end_matches('/');
     if trimmed.to_ascii_lowercase().ends_with("/v1") {

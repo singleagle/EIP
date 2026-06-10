@@ -37,6 +37,10 @@ pub enum ProviderProtocol {
     /// OpenAI Chat Completions API (`/v1/chat/completions`).
     /// Used by: OpenAI, Tinfoil, Groq, NVIDIA NIM, OpenRouter, etc.
     OpenAiCompletions,
+    /// OpenAI Responses API (`/v1/responses`).
+    /// Used by the generic `openai_compatible` backend for models that no
+    /// longer support Chat Completions.
+    OpenAiResponses,
     /// Anthropic Messages API.
     Anthropic,
     /// Ollama API (OpenAI-ish, no API key required).
@@ -493,6 +497,15 @@ mod tests {
         let openai = registry.find("openai").expect("openai should exist");
         assert_eq!(openai.id, "openai");
         assert_eq!(openai.protocol, ProviderProtocol::OpenAiCompletions);
+
+        let openai_compatible = registry
+            .find("openai_compatible")
+            .expect("openai_compatible should exist");
+        assert_eq!(openai_compatible.id, "openai_compatible");
+        assert_eq!(
+            openai_compatible.protocol,
+            ProviderProtocol::OpenAiResponses
+        );
     }
 
     #[test]

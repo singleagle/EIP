@@ -30,6 +30,23 @@ This document tracks feature parity between IronClaw (Rust implementation) and O
 
 ---
 
+## 1A. EIP / ERP Kernel
+
+| Feature | OpenClaw | IronClaw | Notes |
+|---------|----------|----------|-------|
+| EIP architecture specs | ➖ | ✅ | `.spec/goal.md`, `.spec/architecture.md`, `.spec/milestones.md` |
+| Rule bundle data contract | ➖ | 🚧 | `erp.rule_bundle.v1`; owned by optional `crates/eip` |
+| ERP command proposal contract | ➖ | 🚧 | `erp.command.v1`; first command is `purchase.submit_request` |
+| EIP-MDL runtime semantic contract | ➖ | 🚧 | Purchase MVP uses `AnalyzedEipMdl` to validate published MDL hash and action binding |
+| Local ERP Kernel MVP | ➖ | 🚧 | In-process kernel validates proposal/rule bundle and writes to an independent EIP libSQL database |
+| `purchase.submit_request` vertical slice | ➖ | 🚧 | `purchase_tool` is registered only with Cargo feature `eip` |
+| Remote Cloud ERP Kernel API | ➖ | ❌ | Planned after local vertical slice stabilizes |
+| WASM domain capability extension | ➖ | ❌ | Planned: wiki/kernel/schema capability declarations |
+
+### Owner: _Unassigned_
+
+---
+
 ## 2. Gateway System
 
 | Feature | OpenClaw | IronClaw | Notes |

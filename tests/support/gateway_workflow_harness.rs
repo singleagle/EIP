@@ -138,7 +138,7 @@ impl GatewayWorkflowHarness {
         config.routines.max_concurrent_routines = 4;
         config.llm.backend = "openai_compatible".to_string();
         config.llm.provider = Some(RegistryProviderConfig {
-            protocol: ProviderProtocol::OpenAiCompletions,
+            protocol: ProviderProtocol::OpenAiResponses,
             provider_id: "openai_compatible".to_string(),
             api_key: Some(SecretString::from("dummy".to_string())),
             base_url: base_url.to_string(),

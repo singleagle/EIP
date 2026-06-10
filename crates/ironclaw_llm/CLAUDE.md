@@ -11,6 +11,7 @@ Multi-provider LLM integration with circuit breaker, retry, failover, and respon
 | `error.rs` | `LlmError` enum used by all providers |
 | `provider.rs` | `LlmProvider` trait, `ChatMessage`, `ToolCall`, `CompletionRequest`, `sanitize_tool_messages` |
 | `nearai_chat.rs` | NEAR AI Chat Completions provider (dual auth: session token or API key) |
+| `openai_responses.rs` | OpenAI-compatible Responses API provider used by built-in `openai_compatible` |
 | `codex_auth.rs` | Reads Codex CLI `auth.json`, extracts tokens, refreshes ChatGPT OAuth access tokens |
 | `codex_chatgpt.rs` | Custom Responses API provider for Codex ChatGPT backend (`/backend-api/codex`) |
 | `openai_codex_provider.rs` | OpenAI Codex Responses API client (SSE streaming, JWT auth, subscription billing) |
@@ -53,7 +54,7 @@ Set via `LLM_BACKEND` env var:
 | `anthropic` | Anthropic | `ANTHROPIC_API_KEY` |
 | `github_copilot` | GitHub Copilot Chat API | `GITHUB_COPILOT_TOKEN`, `GITHUB_COPILOT_MODEL` |
 | `ollama` | Ollama local | `OLLAMA_BASE_URL` |
-| `openai_compatible` | Any OpenAI-compatible endpoint | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` |
+| `openai_compatible` | Generic OpenAI-compatible Responses endpoint | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` |
 | `tinfoil` | Tinfoil TEE inference | `TINFOIL_API_KEY`, `TINFOIL_MODEL` |
 | `bedrock` | AWS Bedrock (requires `--features bedrock`) | `BEDROCK_REGION`, `BEDROCK_MODEL`, `AWS_PROFILE` |
 | `openai_codex` | OpenAI Codex (ChatGPT subscription) | `OPENAI_CODEX_MODEL`, `OPENAI_CODEX_CLIENT_ID` |
@@ -260,7 +261,7 @@ Raw provider
 - **System messages** are extracted into the rig-core `preamble` field (concatenated with newlines if multiple).
 - **Tool call IDs** are generated (`generated_tool_call_{seed}`) if the provider returns empty/whitespace IDs.
 - **Tool name normalization**: strips `proxy_` prefix if it matches a known tool (handles some proxy implementations).
-- **OpenAI uses Chat Completions API** (`completions_api()`), not the newer Responses API — the Responses API path panics when tool results are sent back (rig-core doesn't thread `call_id` through `ToolCall`).
+- Built-in `openai_compatible` uses IronClaw's dedicated Responses API provider (`openai_responses.rs`) so tool `call_id`s are preserved. Other `OpenAiCompletions` registry providers still use rig-core's Chat Completions client (`completions_api()`).
 
 ## Streaming Support
 

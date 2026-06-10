@@ -3,6 +3,7 @@ const API_KEY_UNCHANGED = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022';
 
 const ADAPTER_LABELS = {
   open_ai_completions: 'OpenAI Compatible',
+  open_ai_responses: 'OpenAI Responses',
   anthropic: 'Anthropic',
   ollama: 'Ollama',
   bedrock: 'AWS Bedrock',

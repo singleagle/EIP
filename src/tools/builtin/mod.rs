@@ -15,6 +15,8 @@ pub mod memory;
 mod message;
 pub mod path_utils;
 mod plan;
+#[cfg(feature = "eip")]
+mod purchase;
 mod restart;
 pub mod routine;
 pub mod secrets_tools;
@@ -44,6 +46,8 @@ pub use knowledge_wiki::KnowledgeWikiTool;
 pub use memory::{MemoryReadTool, MemorySearchTool, MemoryTreeTool, MemoryWriteTool};
 pub use message::MessageTool;
 pub use plan::PlanUpdateTool;
+#[cfg(feature = "eip")]
+pub use purchase::PurchaseTool;
 pub use restart::RestartTool;
 pub use routine::{
     EventEmitTool, RoutineCreateTool, RoutineDeleteTool, RoutineFireTool, RoutineHistoryTool,

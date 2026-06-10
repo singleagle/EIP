@@ -1,0 +1,43 @@
+[
+  {
+    "label": "ironclaw debug host",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "program": "target/debug/ironclaw",
+    "args": ["run"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+  },
+  {
+    "label": "debug feishu-channel WASM (step-through)",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "program": "${workspaceFolder}/target/debug/ironclaw",
+    "args": ["run"],
+    "env": {
+      "RUST_LOG": "ironclaw=debug,wasi=debug,wasmtime=info",
+      "IRONCLAW_WASM_DEBUG": "1",
+    },
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "sourceMap": {
+      "/wasm/": "${workspaceFolder}/channels-src/feishu/src/",
+    },
+    "preLaunchTask": {
+      "command": "cd channels-src/feishu && ./build.sh --debug && mkdir -p ~/.ironclaw/channels && cp feishu.wasm ~/.ironclaw/channels/feishu.wasm",
+    },
+  },
+  {
+    "label": "build & debug feishu-channel WASM",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "program": "${workspaceFolder}/target/debug/ironclaw",
+    "args": ["run"],
+    "env": {
+      "RUST_LOG": "ironclaw=debug,wasi=debug",
+      "IRONCLAW_WASM_DEBUG": "1",
+    },
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "preLaunchTask": {
+      "command": "cd channels-src/feishu && ./build.sh --debug && mkdir -p ~/.ironclaw/channels && cp feishu.wasm ~/.ironclaw/channels/feishu.wasm",
+    },
+  },
+]

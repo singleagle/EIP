@@ -13,6 +13,8 @@ use crate::secrets::SecretsStore;
 use crate::tools::builder::{
     BuildSoftwareTool, BuilderConfig, LlmSoftwareBuilder, SoftwareBuilder,
 };
+#[cfg(feature = "eip")]
+use crate::tools::builtin::PurchaseTool;
 use crate::tools::builtin::{
     ApplyPatchTool, CancelJobTool, CreateJobTool, EchoTool, ExtensionInfoTool, FileUndoTool,
     GlobTool, GrepTool, HttpTool, JobEventsTool, JobPromptTool, JobStatusTool, JsonTool,
@@ -69,6 +71,8 @@ const PROTECTED_TOOL_NAMES: &[&str] = &[
     "memory_tree",
     "knowledge_wiki",
     "wiki_context",
+    #[cfg(feature = "eip")]
+    "purchase_tool",
     // Job tools
     "create_job",
     "list_jobs",
@@ -610,8 +614,10 @@ impl ToolRegistry {
             resolver,
             db,
         )));
+        #[cfg(feature = "eip")]
+        self.register_sync(Arc::new(PurchaseTool::new_default()));
 
-        tracing::debug!("Registered 6 memory tools");
+        tracing::debug!("Registered memory tools");
     }
 
     /// Register memory tools with a fixed workspace (backward compatibility).

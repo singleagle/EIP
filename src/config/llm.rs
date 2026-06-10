@@ -1148,6 +1148,25 @@ mod tests {
     }
 
     #[test]
+    fn openai_compatible_resolves_to_responses_protocol() {
+        let _guard = lock_env();
+        clear_openai_compatible_env();
+
+        let settings = Settings {
+            llm_backend: Some("openai_compatible".to_string()),
+            openai_compatible_base_url: Some("http://localhost:9090/v1".to_string()),
+            selected_model: Some("gpt-5.5".to_string()),
+            ..Default::default()
+        };
+
+        let cfg = crate::config::llm::resolve(&settings).expect("resolve should succeed");
+        let provider = cfg.provider.expect("provider config should be present");
+
+        assert_eq!(provider.provider_id, "openai_compatible");
+        assert_eq!(provider.protocol, ProviderProtocol::OpenAiResponses);
+    }
+
+    #[test]
     fn registry_provider_resolves_groq() {
         let _guard = lock_env();
         // SAFETY: Under ENV_MUTEX.
